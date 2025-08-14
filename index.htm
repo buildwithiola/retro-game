@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Kawaii Retro Game</title>
+<style>
+  body {
+    margin: 0;
+    background-color: #ffeaf4;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    font-family: "Press Start 2P", cursive;
+  }
+  canvas {
+    background-color: #fffafc;
+    border: 5px solid #ffb6c1;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="480" height="640"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let player = { x: 200, y: 550, width: 64, height: 64, speed: 5 };
+let collectibles = [];
+let obstacles = [];
+let score = 0;
+
+// Load images from your GitHub repo (raw links)
+const playerImg = new Image();
+playerImg.src = "https://raw.githubusercontent.com/buildwithiola/retro-game/main/kling_20250814_Text_to_Image_Pastel_kaw_1357_0.png";
+
+const collectibleImg = new Image();
+collectibleImg.src = "https://raw.githubusercontent.com/buildwithiola/retro-game/main/kling_20250814_Text_to_Image_Pastel_kaw_1357_1.png";
+
+const obstacleImg = new Image();
+obstacleImg.src = "https://raw.githubusercontent.com/buildwithiola/retro-game/main/kling_20250814_Text_to_Image_Pastel_kaw_1357_2.png";
+
+// Spawn collectibles
+function spawnCollectible() {
+  collectibles.push({
+    x: Math.random() * (canvas.width - 40),
+    y: -40,
+    width: 40,
+    height: 40,
+    speed: 2
+  });
+}
+
+// Spawn obstacles
+function spawnObstacle() {
+  obstacles.push({
+    x: Math.random() * (canvas.width - 40),
+    y: -40,
+    width: 40,
+    height: 40,
+    speed: 3
+  });
+}
+
+function update() {
+  collectibles.forEach((c) => c.y += c.speed);
+  obstacles.forEach((o) => o.y += o.speed);
+
+  // Remove off-screen
+  collectibles = collectibles.filter(c => c.y < canvas.height);
+  obstacles = obstacles.filter(o => o.y < canvas.height);
+
+  // Collisions
+  collectibles.forEach((c, i) => {
+    if (player.x < c.x + c.width &&
+        player.x + player.width > c.x &&
+        player.y < c.y + c.height &&
+        player.y + player.height > c.y) {
+      score += 10;
+      collectibles.splice(i, 1);
+    }
+  });
+
+  obstacles.forEach((o, i) => {
+    if (player.x < o.x + o.width &&
+        player.x + player.width > o.x &&
+        player.y < o.y + o.height &&
+        player.y + player.height > o.y) {
+      score -= 5;
+      obstacles.splice(i, 1);
+    }
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Player
+  ctx.drawImage(playerImg, player.x, player.y, player.width, player.height);
+
+  // Collectibles
+  collectibles.forEach(c => ctx.drawImage(collectibleImg, c.x, c.y, c.width, c.height));
+
+  // Obstacles
+  obstacles.forEach(o => ctx.drawImage(obstacleImg, o.x, o.y, o.width, o.height));
+
+  // Score
+  ctx.fillStyle = "#ff69b4";
+  ctx.font = "16px 'Press Start 2P'";
+  ctx.fillText("Score: " + score, 10, 20);
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowLeft" && player.x > 0) player.x -= player.speed;
+  if (e.key === "ArrowRight" && player.x < canvas.width - player.width) player.x += player.speed;
+});
+
+// Spawners
+setInterval(spawnCollectible, 1500);
+setInterval(spawnObstacle, 2000);
+
+gameLoop();
+</script>
+
+</body>
+</html>
