@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Kawaii Skies — Pastel Arcade</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+<style>
+  :root{
+    --day:#cfe9ff;
+    --sunset:#ffd8e8;
+    --night:#1f2740;
+  }
+  html,body{margin:0;height:100%;background:#ffeef7;font-family:"Courier New",monospace;}
+  canvas{display:block;width:100vw;height:100vh;image-rendering:pixelated;cursor:crosshair}
+  .hud{
+    position:fixed;left:14px;top:14px;padding:10px 12px;border-radius:12px;
+    background:rgba(255,255,255,.65);backdrop-filter:blur(6px);border:1px solid rgba(0,0,0,.06);
+    font-size:14px;line-height:1.25;color:#2a2a35; user-select:none;
+  }
+  .hud b{font-weight:700}
+  .hint{position:fixed;right:14px;top:14px;font-size:12px;color:#5a6070;background:rgba(0,0,0,.06);
+        padding:8px 10px;border-radius:10px;user-select:none;}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud" id="hud">
+  <div><b>Kawaii Skies</b> — catch the cuties</div>
+  <div>Score: <span id="sc">0</span> · Wave: <span id="wv">1</span></div>
+  <div>Lives: <span id="lv">❤❤❤</span> · Power: <span id="pw">—</span></div>
+  <div style="margin-top:6px;color:#616777">Move: mouse/drag · <b>Space</b> start · Click to restart</div>
+</div>
+<div class="hint">retro pastel</div>
+
+<script>
+/* ==============================
+   Canvas & Globals
+============================== */
+const c = document.getElementById('game');
+const x = c.getContext('2d');
+let W = c.width = window.innerWidth;
+let H = c.height = window.innerHeight;
+window.addEventListener('resize', ()=>{ W=c.width=innerWidth; H=c.height=innerHeight; });
+
+/* ==============================
+   Game State
+============================== */
+let score=0, lives=3, wave=1, frame=0;
+let started=false, over=false, startMs=0;
+let speedBase=1.8;        // base fall speed
+let backgroundPhase=0;    // 0 day, 1 sunset, 2 night
+let critters=[], fires=[], powers=[], sparkles=[];
+let power = { type:null, t:0 }; // active power with remaining seconds
+
+// Player — a cute pastel glider (round body)
+const player = { x: W/2-26, y: H-110, w: 52, h: 52, speed: 10 };
+
+// mouse / touch control
+let pointerX = player.x + player.w/2;
+window.addEventListener('mousemove', e => { pointerX = e.clientX; });
+window.addEventListener('touchmove', e => { pointerX = e.touches[0].clientX; });
+
+window.addEventListener('keydown', e=>{
+  if(e.key === ' '){
+    if(!started && !over) startGame();
+    else if(over) startGame();
+  }
+});
+
+/* ==============================
+   Utility
+============================== */
+const rnd=(a,b)=>Math.random()*(b-a)+a;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const collides = (A,B)=> A.x < B.x+B.w && A.x+A.w > B.x && A.y < B.y+B.h && A.y+A.h > B.y;
+
+function hearts(n){
+  const total=3;
+  return '❤'.repeat(Math.max(0,n)) + '♡'.repeat(Math.max(0,total-n));
+}
+function setHUD(){
+  document.getElementById('sc').textContent = score;
+  document.getElementById('wv').textContent = wave;
+  document.getElementById('lv').textContent = hearts(lives);
+  document.getElementById('pw').textContent = power.type ? power.type : '—';
+}
+
+/* ==============================
+   Cute Drawing Helpers (sprites)
+   All original, “Hello-Kitty-adjacent” kawaii shapes
+============================== */
+function drawFaceEyes(cx, cy, scale, mood="happy"){
+  x.fillStyle = '#111';
+  // eyes
+  x.beginPath(); x.arc(cx - 7*scale, cy - 2*scale, 2.2*scale, 0, Math.PI*2); x.fill();
+  x.beginPath(); x.arc(cx + 7*scale, cy - 2*scale, 2.2*scale, 0, Math.PI*2); x.fill();
+  // mouth
+  x.strokeStyle = '#333'; x.lineWidth = 1.6*scale; x.beginPath();
+  if(mood==="wow"){
+    x.arc(cx, cy+2*scale, 2.5*scale, 0, Math.PI*2);
+  }else{
+    x.arc(cx, cy+3*scale, 4*scale, 0.15*Math.PI, 0.85*Math.PI);
+  }
+  x.stroke();
+  // blush
+  x.fillStyle = 'rgba(255,145,170,.55)';
+  x.beginPath(); x.ellipse(cx-12*scale, cy+4*scale, 4.5*scale, 2.2*scale, 0, 0, Math.PI*2); x.fill();
+  x.beginPath(); x.ellipse(cx+12*scale, cy+4*scale, 4.5*scale, 2.2*scale, 0, 0, Math.PI*2); x.fill();
+}
+
+function drawKawaiiCat(cx, cy, scale=1, body='#ffdce8', ear='#ffc1dc'){
+  x.save();
+  x.translate(cx, cy);
+  // head
+  x.fillStyle = body; x.strokeStyle = '#e9b6c8'; x.lineWidth=1*scale;
+  x.beginPath(); x.roundRect(-14*scale,-14*scale,28*scale,28*scale,6*scale); x.fill(); x.stroke();
+  // ears
+  x.fillStyle = ear;
+  x.beginPath(); x.moveTo(-12*scale,-8*scale); x.lineTo(-4*scale,-14*scale); x.lineTo(-2*scale,-6*scale); x.closePath(); x.fill();
+  x.beginPath(); x.moveTo(12*scale,-8*scale); x.lineTo(4*scale,-14*scale); x.lineTo(2*scale,-6*scale); x.closePath(); x.fill();
+  // whiskers
+  x.strokeStyle = '#b98aa1'; x.lineWidth=1*scale;
+  x.beginPath(); x.moveTo(-16*scale,0); x.lineTo(-6*scale,0); x.moveTo(-16*scale,4*scale); x.lineTo(-6*scale,4*scale); x.stroke();
+  x.beginPath(); x.moveTo(16*scale,0); x.lineTo(6*scale,0); x.moveTo(16*scale,4*scale); x.lineTo(6*scale,4*scale); x.stroke();
+  // face
+  drawFaceEyes(0,0,scale,'happy');
+  x.restore();
+}
+function drawKawaiiBunny(cx, cy, scale=1, body='#e8f1ff', ear='#ffdce8'){
+  x.save(); x.translate(cx,cy);
+  // head
+  x.fillStyle=body; x.strokeStyle='#c9d4ff'; x.lineWidth=1*scale;
+  x.beginPath(); x.roundRect(-13*scale,-13*scale,26*scale,26*scale,8*scale); x.fill(); x.stroke();
+  // ears (tall)
+  x.fillStyle=ear;
+  x.beginPath(); x.roundRect(-9*scale,-28*scale,10*scale,16*scale,5*scale); x.fill();
+  x.beginPath(); x.roundRect( -1*scale,-28*scale,10*scale,16*scale,5*scale); x.fill();
+  drawFaceEyes(0,0,scale,'happy');
+  x.restore();
+}
+function drawKawaiiBear(cx, cy, scale=1, body='#fff3d2', ear='#ffe2a8'){
+  x.save(); x.translate(cx,cy);
+  x.fillStyle=body; x.strokeStyle='#e9d3a2'; x.lineWidth=1*scale;
+  x.beginPath(); x.roundRect(-14*scale,-14*scale,28*scale,28*scale,10*scale); x.fill(); x.stroke();
+  // ears
+  x.fillStyle=ear;
+  x.beginPath(); x.arc(-9*scale,-12*scale,5*scale,0,Math.PI*2); x.fill();
+  x.beginPath(); x.arc( 9*scale,-12*scale,5*scale,0,Math.PI*2); x.fill();
+  drawFaceEyes(0,0,scale,'happy');
+  x.restore();
+}
+function drawKawaiiFox(cx, cy, scale=1, face='#ffe1c1', ear='#ffc89d', mask='#ffb38a'){
+  x.save(); x.translate(cx,cy);
+  x.fillStyle=face; x.strokeStyle='#e6b093'; x.lineWidth=1*scale;
+  x.beginPath(); x.roundRect(-14*scale,-14*scale,28*scale,28*scale,8*scale); x.fill(); x.stroke();
+  // ears
+  x.fillStyle=ear;
+  x.beginPath(); x.moveTo(-10*scale,-10*scale); x.lineTo(-2*scale,-16*scale); x.lineTo(-1*scale,-7*scale); x.closePath(); x.fill();
+  x.beginPath(); x.moveTo( 10*scale,-10*scale); x.lineTo( 2*scale,-16*scale); x.lineTo( 1*scale,-7*scale); x.closePath(); x.fill();
+  // little mask
+  x.fillStyle=mask; x.globalAlpha=0.35;
+  x.beginPath(); x.roundRect(-14*scale,-3*scale,28*scale,12*scale,6*scale); x.fill();
+  x.globalAlpha=1;
+  drawFaceEyes(0,0,scale,'happy');
+  x.restore();
+}
+
+// Player sprite (chibi round with ribbon)
+function drawPlayer(p){
+  x.save();
+  const cx = p.x + p.w/2, cy = p.y + p.h/2;
+  // ribbon
+  x.fillStyle='#ffd1e6';
+  x.beginPath(); x.ellipse(cx, cy-22, 14, 6, 0, 0, Math.PI*2); x.fill();
+  x.fillStyle='#ffbeda'; x.beginPath(); x.arc(cx, cy-22, 4.8, 0, Math.PI*2); x.fill();
+  // body
+  x.fillStyle='#f8d7ff'; x.strokeStyle='#e9c2fb'; x.lineWidth=2;
+  x.beginPath(); x.arc(cx, cy, 24, 0, Math.PI*2); x.fill(); x.stroke();
+  drawFaceEyes(cx, cy, 1.2, 'happy');
+  x.restore();
+}
+
+/* ==============================
+   Entities
+============================== */
+class Critter{
+  constructor(){
+    this.kind = ['cat','bunny','bear','fox'][Math.floor(rnd(0,4))];
+    this.size = rnd(0.9,1.2); // scale
+    this.w = 28*this.size; this.h = 28*this.size;
+    this.x = rnd(14, W-14); this.y = -rnd(60,140);
+    this.vy = speedBase + rnd(0.8,2.2) + wave*0.15;
+    this.phase = rnd(0,Math.PI*2);
+    this.drift = rnd(0.01,0.03);
+    this.caught=false;
+  }
+  update(){
+    this.y += this.vy;
+    this.x += Math.sin(this.phase)*0.8;
+    this.phase += this.drift;
+  }
+  draw(){
+    const cx=this.x, cy=this.y;
+    if(this.kind==='cat')  drawKawaiiCat(cx,cy,this.size);
+    if(this.kind==='bunny')drawKawaiiBunny(cx,cy,this.size);
+    if(this.kind==='bear') drawKawaiiBear(cx,cy,this.size);
+    if(this.kind==='fox')  drawKawaiiFox(cx,cy,this.size);
+  }
+  getAABB(){ return {x:this.x-14*this.size, y:this.y-14*this.size, w:28*this.size, h:28*this.size}; }
+}
+
+class Fireball{
+  constructor(){
+    this.size = rnd(24,36);
+    this.x = rnd(20, W-20);
+    this.y = -rnd(60,160);
+    this.vy = speedBase + rnd(1.6,2.8) + wave*0.2;
+    this.swing = rnd(0.02,0.06);
+    this.phase = rnd(0,Math.PI*2);
+  }
+  update(){
+    this.y += this.vy;
+    this.x += Math.sin(this.phase)*0.9;
+    this.phase += this.swing;
+  }
+  draw(){
+    const r=this.size/2, cx=this.x, cy=this.y;
+    // glow
+    const g = x.createRadialGradient(cx,cy,6, cx,cy,r);
+    g.addColorStop(0, '#fff2c4');
+    g.addColorStop(0.55,'#ff9b52');
+    g.addColorStop(1, '#d24b20');
+    x.fillStyle=g; x.beginPath(); x.arc(cx,cy,r,0,Math.PI*2); x.fill();
+    // tail
+    x.fillStyle='rgba(255,140,0,.42)';
+    x.beginPath(); x.ellipse(cx, cy+r*0.9, r*0.9, r*0.55, Math.PI, 0, Math.PI*2); x.fill();
+    // tiny sparks
+    x.fillStyle='rgba(255,220,150,.7)';
+    x.fillRect(cx-r*0.4, cy-r*0.2, 2, 2);
+    x.fillRect(cx+r*0.2, cy-r*0.1, 2, 2);
+  }
+  getAABB(){ return {x:this.x-this.size/2, y:this.y-this.size/2, w:this.size, h:this.size}; }
+}
+
+class PowerStar{
+  constructor(){
+    this.size = 22;
+    this.x = rnd(20, W-20);
+    this.y = -rnd(80,180);
+    this.vy = speedBase + rnd(1.2,2);
+    this.type = ['shield','slow','wide'][Math.floor(rnd(0,3))];
+    this.phase = rnd(0,Math.PI*2);
+  }
+  update(){ this.y += this.vy; this.x += Math.sin(this.phase)*0.6; this.phase += 0.02; }
+  draw(){
+    const cx=this.x, cy=this.y, R=this.size/2, r=this.size/4, spikes=5;
+    x.save();
+    x.translate(cx,cy); x.rotate(Math.sin(this.phase)*0.2);
+    const grad = x.createRadialGradient(0,0,2,0,0,R);
+    grad.addColorStop(0,'#fffbe6'); grad.addColorStop(1,'#ffe08a');
+    x.fillStyle=grad; x.beginPath();
+    let rot = Math.PI/2*3, step = Math.PI/spikes;
+    x.moveTo(0,-R);
+    for(let i=0;i<spikes;i++){
+      x.lineTo(Math.cos(rot)*R, Math.sin(rot)*R); rot+=step;
+      x.lineTo(Math.cos(rot)*r, Math.sin(rot)*r); rot+=step;
+    }
+    x.closePath(); x.fill();
+    // label
+    x.fillStyle='#6b4e00'; x.font='12px Courier New'; x.textAlign='center'; x.textBaseline='middle';
+    x.fillText(this.type==='shield'?'★':this.type==='slow'?'S':'W',0,1);
+    x.restore();
+  }
+  getAABB(){ return {x:this.x-this.size/2, y:this.y-this.size/2, w:this.size, h:this.size}; }
+}
+
+class Spark{
+  constructor(x0,y0,col='rgba(255,170,200,.9)'){
+    this.x=x0; this.y=y0; this.vx=rnd(-1.2,1.2); this.vy=rnd(-1.8,-0.4);
+    this.a=1; this.col=col; this.s=rnd(2,3);
+  }
+  update(){ this.x+=this.vx; this.y+=this.vy; this.vy+=0.05; this.a-=0.02; }
+  draw(){ x.fillStyle=this.col.replace('.9', this.a.toFixed(2)); x.fillRect(this.x,this.y,this.s,this.s); }
+}
+
+/* ==============================
+   Backdrop
+============================== */
+function drawSky(){
+  const phase = backgroundPhase; // 0 day, 1 sunset, 2 night
+  const top = phase===0?'#fff6ff':phase===1?'#ffd8e8':'#1f2740';
+  const mid = phase===0?'#dff1ff':phase===1?'#ffcde1':'#2a3358';
+  const bot = phase===0?'#cfe9ff':phase===1?'#ffbdcf':'#3a4472';
+
+  const g = x.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, top); g.addColorStop(0.55, mid); g.addColorStop(1, bot);
+  x.fillStyle = g; x.fillRect(0,0,W,H);
+
+  // sun / moon
+  if(phase!==2){
+    x.fillStyle='rgba(255,242,201,0.65)';
+    x.beginPath(); x.arc(W*0.14,H*0.22,90,0,Math.PI*2); x.fill();
+    x.fillStyle='#fff2c9'; x.beginPath(); x.arc(W*0.14,H*0.22,60,0,Math.PI*2); x.fill();
+  }else{
+    x.fillStyle='rgba(220,230,255,0.5)';
+    x.beginPath(); x.arc(W*0.86,H*0.22,70,0,Math.PI*2); x.fill();
+    x.fillStyle='#eef2ff'; x.beginPath(); x.arc(W*0.86,H*0.22,46,0,Math.PI*2); x.fill();
+    // twinkle stars
+    x.fillStyle='rgba(255,255,255,.8)';
+    for(let i=0;i<40;i++){ x.fillRect((i*97)%W, (i*53)%H*0.5+20, 2,2); }
+  }
+
+  // mountains
+  x.fillStyle='#cfe0ff';
+  x.beginPath();
+  x.moveTo(0,H*0.65);
+  x.lineTo(W*0.18,H*0.48); x.lineTo(W*0.32,H*0.62); x.lineTo(W*0.54,H*0.45);
+  x.lineTo(W*0.76,H*0.58); x.lineTo(W,H*0.5); x.lineTo(W,H); x.lineTo(0,H);
+  x.closePath(); x.fill();
+
+  // hills
+  x.fillStyle='#efd1f6';
+  x.beginPath();
+  x.moveTo(0,H*0.8);
+  x.bezierCurveTo(W*0.2,H*0.74, W*0.35,H*0.86, W*0.56,H*0.8);
+  x.bezierCurveTo(W*0.75,H*0.74, W*0.9,H*0.87, W,H*0.82);
+  x.lineTo(W,H); x.lineTo(0,H); x.closePath(); x.fill();
+}
+
+function scanlines(){
+  x.strokeStyle='rgba(0,0,0,.08)';
+  for(let y=0;y<H;y+=3){ x.beginPath(); x.moveTo(0,y); x.lineTo(W,y); x.stroke(); }
+}
+
+/* ==============================
+   Game Flow
+============================== */
+function startGame(){
+  score=0; lives=3; wave=1; frame=0; started=true; over=false;
+  startMs=performance.now(); backgroundPhase=0;
+  critters=[]; fires=[]; powers=[]; sparkles=[]; power.type=null; power.t=0;
+}
+c.addEventListener('click', ()=>{ if(over) startGame(); });
+
+function spawn(){
+  const petalRate = Math.max(8, 22 - wave*1.2);      // critters
+  const fireRate  = Math.max(18, 60 - wave*3.0);     // obstacles
+  const powRate   = Math.max(260, 420 - wave*12);    // powerups
+
+  if(frame % Math.floor(petalRate) === 0 && critters.length<120) critters.push(new Critter());
+  if(frame % Math.floor(fireRate)  === 0 && fires.length<40)     fires.push(new Fireball());
+  if(frame % Math.floor(powRate)   === 0 && powers.length<6)     powers.push(new PowerStar());
+}
+
+function applyPower(t){
+  power.type = t; power.t = 10; // seconds
+  if(t==='wide'){ player.w = 70; }
+  if(t==='slow'){ speedBase = 1.2; }
+  if(t==='shield'){ /* handled on hit */ }
+}
+
+function clearPower(){
+  if(power.type==='wide') player.w = 52;
+  if(power.type==='slow') speedBase = 1.8;
+  power.type=null; power.t=0;
+}
+
+/* ==============================
+   Main Loop
+============================== */
+function loop(){
+  requestAnimationFrame(loop);
+  // background
+  drawSky();
+
+  // update player position
+  player.x = clamp(pointerX - player.w/2, 12, W - player.w - 12);
+
+  // HUD
+  setHUD();
+
+  if(started && !over){
+    frame++;
+
+    // time/waves
+    const elapsed = (performance.now()-startMs)/1000;
+    wave = Math.min(1 + Math.floor(elapsed/30), 9);
+    backgroundPhase = Math.floor(elapsed/30) % 3;
+
+    // power timer
+    if(power.type){ power.t -= 1/60; if(power.t<=0) clearPower(); }
+
+    // spawn
+    spawn();
+
+    // update/draw critters
+    for(let i=critters.length-1;i>=0;i--){
+      const a = critters[i]; a.update(); a.draw();
+      // collide with player
+      const A=a.getAABB();
+      if(collides({x:player.x,y:player.y,w:player.w,h:player.h}, {x:A.x,y:A.y,w:A.w,h:A.h})){
+        score += 1;
+        // confetti sparks
+        for(let s=0;s<10;s++) sparkles.push(new Spark(a.x,a.y,'rgba(255,170,200,.9)'));
+        critters.splice(i,1);
+        continue;
+      }
+      // missed but no life penalty (keep it cozy)
+      if(a.y > H+40){ critters.splice(i,1); }
+    }
+
+    // obstacles
+    for(let i=fires.length-1;i>=0;i--){
+      const f=fires[i]; f.update(); f.draw();
+      const A=f.getAABB();
+      if(collides({x:player.x,y:player.y,w:player.w,h:player.h}, {x:A.x,y:A.y,w:A.w,h:A.h})){
+        if(power.type==='shield'){
+          // consume shield, explode sparks
+          for(let s=0;s<16;s++) sparkles.push(new Spark(f.x,f.y,'rgba(180,220,255,.95)'));
+          clearPower();
+        }else{
+          lives -= 1;
+          for(let s=0;s<16;s++) sparkles.push(new Spark(f.x,f.y,'rgba(255,120,120,.95)'));
+          if(lives<=0){ over=true; started=false; }
+        }
+        fires.splice(i,1);
+        continue;
+      }
+      if(f.y>H+40) fires.splice(i,1);
+    }
+
+    // powerups
+    for(let i=powers.length-1;i>=0;i--){
+      const u=powers[i]; u.update(); u.draw();
+      const A=u.getAABB();
+      if(collides({x:player.x,y:player.y,w:player.w,h:player.h}, {x:A.x,y:A.y,w:A.w,h:A.h})){
+        applyPower(u.type);
+        for(let s=0;s<14;s++) sparkles.push(new Spark(u.x,u.y,'rgba(255,220,130,.95)'));
+        powers.splice(i,1);
+        continue;
+      }
+      if(u.y>H+40) powers.splice(i,1);
+    }
+
+    // sparkles
+    for(let i=sparkles.length-1;i>=0;i--){
+      const s=sparkles[i]; s.update(); s.draw(); if(s.a<=0) sparkles.splice(i,1);
+    }
+
+    // player on top
+    drawPlayer(player);
+  }else{
+    // attract mode / idle scene
+    drawPlayer(player);
+    // start overlay
+    x.fillStyle='rgba(255,255,255,0.7)';
+    const w=Math.min(520,W*0.85), h=Math.min(320,H*0.6);
+    x.fillRect(W/2-w/2,H/2-h/2,w,h);
+    x.fillStyle='#222'; x.textAlign='center';
+    x.font='26px Courier New';
+    x.fillText(over?'Game Over':'Kawaii Skies', W/2, H/2 - 70);
+    x.font='14px Courier New';
+    x.fillStyle='#505565';
+    x.fillText('Catch cute animals (+1). Avoid fireballs (lose a life).', W/2, H/2 - 30);
+    x.fillText('Power-ups: W=Wide paddle, S=Slow, ★=Shield (10s).', W/2, H/2 - 8);
+    x.fillText('Press SPACE to start · Click to restart', W/2, H/2 + 24);
+  }
+
+  // CRT scanlines for retro vibe
+  scanlines();
+}
+requestAnimationFrame(loop);
+c.addEventListener('click', ()=>{ if(!started && over) startGame(); });
+
+/* ==============================
+   Kickoff
+============================== */
+setHUD();
+</script>
+</body>
+</html>
