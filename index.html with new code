@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kawaii Retro Game</title>
+<style>
+  body {
+    margin: 0;
+    background-color: #ffeaf4;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  canvas {
+    background-color: #fff0fa;
+    border: 4px solid #ffcce5;
+    border-radius: 16px;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="480" height="320"></canvas>
+<script>
+// Load images directly from GitHub raw URLs
+const IMG = {
+  player: "https://raw.githubusercontent.com/buildwithiola/retro-game/main/kling_20250814_Text_to_Image_Pastel_kaw_1357_0.png",
+  collectible: "https://raw.githubusercontent.com/buildwithiola/retro-game/main/kling_20250814_Text_to_Image_Pastel_kaw_1357_1.png",
+  obstacle: "https://raw.githubusercontent.com/buildwithiola/retro-game/main/kling_20250814_Text_to_Image_Pastel_kaw_1357_2.png"
+};
+
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let player = { x: 50, y: 150, width: 50, height: 50, image: new Image() };
+let collectibles = [];
+let obstacles = [];
+let score = 0;
+
+player.image.src = IMG.player;
+
+function createCollectible() {
+  const img = new Image();
+  img.src = IMG.collectible;
+  collectibles.push({
+    x: canvas.width,
+    y: Math.random() * (canvas.height - 40),
+    width: 40,
+    height: 40,
+    image: img
+  });
+}
+
+function createObstacle() {
+  const img = new Image();
+  img.src = IMG.obstacle;
+  obstacles.push({
+    x: canvas.width,
+    y: Math.random() * (canvas.height - 40),
+    width: 40,
+    height: 40,
+    image: img
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(player.image, player.x, player.y, player.width, player.height);
+  
+  collectibles.forEach(c => ctx.drawImage(c.image, c.x, c.y, c.width, c.height));
+  obstacles.forEach(o => ctx.drawImage(o.image, o.x, o.y, o.width, o.height));
+  
+  ctx.fillStyle = "#ff69b4";
+  ctx.font = "20px Arial";
+  ctx.fillText("Score: " + score, 10, 20);
+}
+
+function update() {
+  collectibles.forEach(c => c.x -= 2);
+  obstacles.forEach(o => o.x -= 3);
+  
+  collectibles = collectibles.filter(c => c.x + c.width > 0);
+  obstacles = obstacles.filter(o => o.x + o.width > 0);
+
+  collectibles.forEach((c, i) => {
+    if (player.x < c.x + c.width &&
+        player.x + player.width > c.x &&
+        player.y < c.y + c.height &&
+        player.y + player.height > c.y) {
+      collectibles.splice(i, 1);
+      score++;
+    }
+  });
+
+  obstacles.forEach(o => {
+    if (player.x < o.x + o.width &&
+        player.x + player.width > o.x &&
+        player.y < o.y + o.height &&
+        player.y + player.height > o.y) {
+      alert("Game Over! Final Score: " + score);
+      score = 0;
+      collectibles = [];
+      obstacles = [];
+    }
+  });
+}
+
+function gameLoop() {
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+setInterval(createCollectible, 2000);
+setInterval(createObstacle, 3000);
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowUp") player.y -= 20;
+  if (e.key === "ArrowDown") player.y += 20;
+});
+
+gameLoop();
+</script>
+</body>
+</html>
