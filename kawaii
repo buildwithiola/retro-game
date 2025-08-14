@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<title>Kawaii Run — pastel pixel side-scroller</title>
+<style>
+  :root{ --ink:#22242e; --muted:#6b6f7f; --panel:rgba(255,255,255,.75); }
+  html,body{margin:0;height:100%;background:#ffe7f1;font-family:ui-rounded,Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  canvas{display:block;width:100vw;height:100vh;image-rendering:pixelated;cursor:crosshair}
+  /* HUD */
+  .hud{
+    position:fixed;left:14px;top:14px;padding:10px 12px;border-radius:12px;background:var(--panel);
+    backdrop-filter:blur(8px);border:1px solid rgba(0,0,0,.06);font-size:14px;line-height:1.25;color:var(--ink);z-index:10;user-select:none
+  }
+  .hud .row{display:flex;gap:12px;align-items:center}
+  .pill{font-size:12px;padding:6px 10px;background:rgba(0,0,0,.06);border-radius:999px;color:#5a6070}
+  /* Overlay: avatar picker */
+  .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;
+           background:linear-gradient(180deg,rgba(255,246,255,.92),rgba(207,233,255,.92));z-index:20}
+  .card{width:min(960px,92vw);background:var(--panel);border:1px solid rgba(0,0,0,.08);border-radius:16px;
+        padding:20px;backdrop-filter:blur(10px);box-shadow:0 30px 80px rgba(0,0,0,.18);color:#222}
+  .card h1{margin:0 0 6px;font-size:24px}
+  .card p{margin:0 0 14px;color:#6b6f7f;font-size:14px}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .pick{
+    display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;background:#fff;border-radius:12px;
+    border:1px solid rgba(0,0,0,.08);padding:12px;cursor:pointer;transition:transform .08s ease, box-shadow .2s ease;min-height:160px
+  }
+  .pick:hover{transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,0,0,.12)}
+  .pick img{width:96px;height:96px;object-fit:contain;image-rendering:pixelated;background:transparent}
+  .pick small{color:#646b7a}
+  .drop{font-size:12px;color:#616777}
+  .hint{position:fixed;right:14px;top:14px;padding:8px 10px;border-radius:10px;font-size:12px;color:#5a6070;background:rgba(0,0,0,.06);z-index:10}
+  button.upload{font-size:12px;border:none;background:rgba(0,0,0,.06);padding:6px 10px;border-radius:999px;cursor:pointer}
+  .hidden-input{display:none}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- HUD -->
+<div class="hud" id="hud">
+  <div class="row">
+    <b>Kawaii Run</b>
+    <span>Score: <span id="sc">0</span></span>
+    <span>Wave: <span id="wv">1</span></span>
+    <span>Lives: <span id="lv">❤❤❤</span></span>
+    <span class="pill">Jump: Space / Tap</span>
+  </div>
+</div>
+<div class="hint">vibe-coded · pastel retro</div>
+
+<!-- Avatar select -->
+<div class="overlay" id="select">
+  <div class="card">
+    <h1>Choose your kawaii avatar</h1>
+    <p>Click a card to select. <b>Drag & drop</b> your PNGs (with transparency) or click “Upload”. We’ll pixel-render them in-game.</p>
+    <div class="grid" id="grid">
+      <!-- 4 avatar cards -->
+      <div class="pick" data-i="0">
+        <img id="av0" alt="avatar 1"><small>Avatar 1</small>
+        <div>
+          <button class="upload" data-i="0">Upload</button>
+          <input class="hidden-input" type="file" accept="image/*" data-i="0"/>
+        </div>
+        <div class="drop">drop image here</div>
+      </div>
+      <div class="pick" data-i="1">
+        <img id="av1" alt="avatar 2"><small>Avatar 2</small>
+        <div>
+          <button class="upload" data-i="1">Upload</button>
+          <input class="hidden-input" type="file" accept="image/*" data-i="1"/>
+        </div>
+        <div class="drop">drop image here</div>
+      </div>
+      <div class="pick" data-i="2">
+        <img id="av2" alt="avatar 3"><small>Avatar 3</small>
+        <div>
+          <button class="upload" data-i="2">Upload</button>
+          <input class="hidden-input" type="file" accept="image/*" data-i="2"/>
+        </div>
+        <div class="drop">drop image here</div>
+      </div>
+      <div class="pick" data-i="3">
+        <img id="av3" alt="avatar 4"><small>Avatar 4</small>
+        <div>
+          <button class="upload" data-i="3">Upload</button>
+          <input class="hidden-input" type="file" accept="image/*" data-i="3"/>
+        </div>
+        <div class="drop">drop image here</div>
+      </div>
+    </div>
+    <p style="margin-top:8px;color:#616777">Tip: PNG with transparent background looks best. You can start with placeholders and swap later.</p>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   0) PIXEL ENGINE BASICS
+========================================================= */
+const c = document.getElementById('game');
+const g = c.getContext('2d');
+let W = c.width = innerWidth;
+let H = c.height = innerHeight;
+g.imageSmoothingEnabled = false;
+addEventListener('resize', ()=>{ W=c.width=innerWidth; H=c.height=innerHeight; });
+
+/* Tiny audio beeps (unlocked on first input) */
+let AC=null;
+function unlockAudio(){ if(!AC){ AC = new (window.AudioContext||window.webkitAudioContext)(); } }
+addEventListener('pointerdown', unlockAudio, {once:true});
+addEventListener('keydown',   unlockAudio, {once:true});
+function blip(freq=880,len=.09,vol=.12){
+  if(!AC) return;
+  const o=AC.createOscillator(), gn=AC.createGain();
+  o.type='square'; o.frequency.value=freq;
+  gn.gain.setValueAtTime(0.0001, AC.currentTime);
+  gn.gain.exponentialRampToValueAtTime(vol, AC.currentTime+.01);
+  gn.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime+len);
+  o.connect(gn).connect(AC.destination); o.start(); o.stop(AC.currentTime+len+.02);
+}
+
+/* Helpers */
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const rand=(a,b)=>Math.random()*(b-a)+a;
+const AABB=(A,B)=>A.x<B.x+B.w && A.x+A.w>B.x && A.y<B.y+B.h && A.y+A.h>B.y;
+const hearts=n=>'❤'.repeat(Math.max(0,n)) + '♡'.repeat(Math.max(0,3-n));
+const HUD={sc:document.getElementById('sc'),wv:document.getElementById('wv'),lv:document.getElementById('lv')};
+function setHUD(){ HUD.sc.textContent=score; HUD.wv.textContent=wave; HUD.lv.textContent=hearts(lives); }
+
+/* =========================================================
+   1) AVATAR LOADER (drag/drop or upload) → Base64 → <img>
+========================================================= */
+const avatarImgs = [new Image(),new Image(),new Image(),new Image()];
+avatarImgs.forEach(img=>img.style='image-rendering:pixelated');
+
+const DEFAULT_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128'>
+  <rect width='100%' height='100%' fill='rgba(255,255,255,0)'/>
+  <g transform='translate(8,8)'>
+    <rect x='8' y='8' width='96' height='96' rx='16' fill='#ffe3ef' stroke='#ffbcd6' stroke-width='4'/>
+    <circle cx='64' cy='56' r='10' fill='#2b2b35'/><circle cx='32' cy='56' r='10' fill='#2b2b35'/>
+    <path d='M32 78 Q48 92 64 78' fill='none' stroke='#2b2b35' stroke-width='5' stroke-linecap='round'/>
+  </g></svg>`);
+
+for(let i=0;i<4;i++){
+  avatarImgs[i].src = DEFAULT_PLACEHOLDER;
+  document.getElementById('av'+i).src = avatarImgs[i].src;
+}
+
+/* click-to-upload */
+document.querySelectorAll('button.upload').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const i = +btn.dataset.i;
+    const input = document.querySelector(`input.hidden-input[data-i="${i}"]`);
+    input.click();
+  });
+});
+
+document.querySelectorAll('input.hidden-input').forEach(inp=>{
+  inp.addEventListener('change', e=>{
+    const i = +inp.dataset.i;
+    const file = e.target.files[0];
+    if(file) fileToDataURL(file, url=>{
+      avatarImgs[i].src = url;
+      document.getElementById('av'+i).src = url;
+    });
+  });
+});
+
+/* drag & drop */
+document.querySelectorAll('.pick').forEach(card=>{
+  card.addEventListener('dragover', e=>{ e.preventDefault(); card.style.outline='2px dashed #b0b8ff'; });
+  card.addEventListener('dragleave', ()=> card.style.outline='none');
+  card.addEventListener('drop', e=>{
+    e.preventDefault(); card.style.outline='none';
+    const i = +card.dataset.i; const file = e.dataTransfer.files[0];
+    if(file) fileToDataURL(file, url=>{
+      avatarImgs[i].src = url;
+      document.getElementById('av'+i).src = url;
+    });
+  });
+  /* select by click */
+  card.addEventListener('click', ()=>{
+    avatarIndex = +card.dataset.i || 0;
+    startGame();
+  });
+});
+
+/* File → Base64 DataURL */
+function fileToDataURL(file, cb){
+  const fr=new FileReader();
+  fr.onload=()=>cb(fr.result);
+  fr.readAsDataURL(file);
+}
+
+/* =========================================================
+   2) GAME STATE
+========================================================= */
+let started=false, over=false;
+let score=0, lives=3, wave=1, meters=0;
+let speed=3.6, gravity=.55, jumpV=-11.5;
+let t0=performance.now();
+let avatarIndex=0;
+
+/* Player (with tiny idle/walk/jump anim) */
+const PLAYER={
+  x:W*0.22, y:H*.84-36, w:72, h:72, vy:0, onGround:true, t:0, animPhase:0,
+  get box(){ return {x:this.x-this.w/2, y:this.y-this.h/2, w:this.w, h:this.h}; },
+  jump(){ if(this.onGround){ this.vy=jumpV; this.onGround=false; blip(720,.07,.12);} },
+  update(dt){
+    this.t+=dt;
+    this.vy+=gravity; this.y+=this.vy;
+    const floor=H*.84 - this.h/2;
+    if(this.y>=floor){ this.y=floor; this.vy=0; this.onGround=true; }
+    // anim: idle bob / walk bob / jump squash
+    if(this.onGround){
+      this.animPhase = (Math.sin(this.t*10)*2); // bob
+    }else{
+      this.animPhase = -4; // a bit squashed in air
+    }
+  },
+  draw(){
+    const img=avatarImgs[avatarIndex];
+    const px = Math.round(this.x-this.w/2);
+    const py = Math.round(this.y-this.h/2 + this.animPhase);
+    g.imageSmoothingEnabled=false;
+    g.drawImage(img, px, py, this.w, this.h);
+    // soft shadow
+    g.fillStyle='rgba(0,0,0,.12)'; g.beginPath();
+    g.ellipse(this.x, H*.84+6, this.w*.35, 8, 0, 0, Math.PI*2); g.fill();
+  }
+};
+
+/* =========================================================
+   3) WORLD: background & parallax & ground
+========================================================= */
+const skyPhases = [
+  ['#fff6ff','#e6f3ff','#cfe9ff'],  // day
+  ['#ffd8e8','#ffcde1','#ffb9cf'],  // sunset
+  ['#1f2740','#2a3358','#3a4472']   // night
+];
+let bgPhase=0;
+
+function drawSky(t){
+  bgPhase = Math.floor(t/20)%3;
+  const [top,mid,bot] = skyPhases[bgPhase];
+  const lg=g.createLinearGradient(0,0,0,H);
+  lg.addColorStop(0,top); lg.addColorStop(.55,mid); lg.addColorStop(1,bot);
+  g.fillStyle=lg; g.fillRect(0,0,W,H);
+  // sun/moon
+  if(bgPhase!==2){
+    g.fillStyle='rgba(255,242,201,.65)'; g.beginPath(); g.arc(W*.14,H*.22,90,0,Math.PI*2); g.fill();
+    g.fillStyle='#fff2c9'; g.beginPath(); g.arc(W*.14,H*.22,60,0,Math.PI*2); g.fill();
+  }else{
+    g.fillStyle='rgba(220,230,255,.5)'; g.beginPath(); g.arc(W*.86,H*.22,70,0,Math.PI*2); g.fill();
+    g.fillStyle='#eef2ff'; g.beginPath(); g.arc(W*.86,H*.22,46,0,Math.PI*2); g.fill();
+    g.fillStyle='rgba(255,255,255,.8)'; for(let i=0;i<40;i++){ g.fillRect((i*97)%W, (i*53)%H*.5+20, 2,2); }
+  }
+}
+class Layer{ constructor(speed,draw){ this.speed=speed; this.x=0; this.drawFn=draw; } update(dt){ this.x=(this.x-this.speed*dt)%W; } draw(){ this.drawFn(this.x); this.drawFn(this.x+W); } }
+function drawCloudStrip(o,a=.75,y=H*.25,A=20,S=120){ g.fillStyle=`rgba(255,255,255,${a})`; for(let i=0;i<Math.ceil(W/S)+2;i++){const x0=o+i*S; g.beginPath(); g.ellipse(x0, y+Math.sin(x0*.004)*A, S*.9, 35, 0, 0, Math.PI*2); g.fill(); } }
+const layerFar=new Layer(.04,(ox)=>drawCloudStrip(ox,.5,H*.20,12,140));
+const layerNear=new Layer(.12,(ox)=>drawCloudStrip(ox,.8,H*.32,18,120));
+
+let groundScroll=0;
+function drawGround(dt){
+  groundScroll=(groundScroll+speed*dt*.8)%64;
+  // hills stripe
+  g.fillStyle='#efd1f6'; g.beginPath(); g.moveTo(0,H*.78);
+  g.bezierCurveTo(W*.25,H*.72, W*.45,H*.86, W*.65,H*.80);
+  g.bezierCurveTo(W*.82,H*.76, W*.95,H*.88, W,H*.84);
+  g.lineTo(W,H); g.lineTo(0,H); g.closePath(); g.fill();
+  // checker ground
+  const tile=64, y0=H*.84;
+  for(let x0=-tile;x0<=W+tile;x0+=tile){
+    g.fillStyle=(Math.floor((x0+groundScroll)/tile)%2===0)?'#ffdceb':'#ffe9f3';
+    g.fillRect(Math.floor(x0+groundScroll), y0, tile, H-y0);
+  }
+}
+
+/* CRT scanlines */
+function scanlines(){ g.strokeStyle='rgba(0,0,0,.08)'; for(let y=0;y<H;y+=3){ g.beginPath(); g.moveTo(0,y); g.lineTo(W,y); g.stroke(); } }
+
+/* =========================================================
+   4) ENEMIES & POWER-UPS (kawaii, drawn in code)
+========================================================= */
+/* Angry mochi */
+class Mochi{
+  constructor(){
+    this.w=40; this.h=30;
+    this.x=W + rand(0,W*.6); this.y=H*.84 - this.h - rand(0,60);
+    this.vx=-(speed + rand(1.2,2.4)); this.t=0;
+  }
+  get box(){ return {x:this.x, y:this.y, w:this.w, h:this.h}; }
+  update(dt){ this.t+=dt; this.x+=this.vx*dt*60; this.y+=Math.sin(this.t*6)*.4; }
+  draw(){
+    g.save();
+    g.translate(Math.round(this.x), Math.round(this.y));
+    // body
+    g.fillStyle='#fff0f6'; g.strokeStyle='#ffbcd6'; g.lineWidth=2;
+    g.beginPath(); roundRect(g,0,0,this.w,this.h,10); g.fill(); g.stroke();
+    // face
+    g.fillStyle='#2b2b35'; g.beginPath(); g.arc(this.w*.35, this.h*.55, 3, 0, Math.PI*2); g.fill();
+    g.beginPath(); g.arc(this.w*.65, this.h*.55, 3, 0, Math.PI*2); g.fill();
+    g.strokeStyle='#2b2b35'; g.lineWidth=2;
+    g.beginPath(); g.moveTo(this.w*.45,this.h*.65); g.quadraticCurveTo(this.w*.5,this.h*.75,this.w*.55,this.h*.65); g.stroke();
+    // blush
+    g.fillStyle='rgba(255,140,170,.5)'; g.fillRect(this.w*.25,this.h*.68,6,3); g.fillRect(this.w*.69,this.h*.68,6,3);
+    g.restore();
+  }
+}
+/* Fireball dumpling */
+class Dumpling{
+  constructor(){
+    this.r=18; this.x=W + rand(W*.2,W*.8); this.y=H*.84 - this.r - rand(20,120);
+    this.vx=-(speed + rand(1.6,3.2)); this.phase=rand(0,Math.PI*2);
+  }
+  get box(){ return {x:this.x-this.r, y:this.y-this.r, w:this.r*2, h:this.r*2}; }
+  update(dt){ this.phase+=.06; this.x+=this.vx*dt*60; this.y+=Math.sin(this.phase)*.8; }
+  draw(){
+    const cx=this.x, cy=this.y, r=this.r;
+    // glow flame
+    const grd=g.createRadialGradient(cx,cy,4,cx,cy,r);
+    grd.addColorStop(0,'#fff2c4'); grd.addColorStop(.55,'#ff9b52'); grd.addColorStop(1,'#d24b20');
+    g.fillStyle=grd; g.beginPath(); g.arc(cx,cy,r,0,Math.PI*2); g.fill();
+    // dumpling face
+    g.fillStyle='#2b2b35'; g.beginPath(); g.arc(cx-r*.3,cy,2,0,Math.PI*2); g.fill();
+    g.beginPath(); g.arc(cx+r*.3,cy,2,0,Math.PI*2); g.fill();
+    g.strokeStyle='#2b2b35'; g.lineWidth=2; g.beginPath();
+    g.moveTo(cx-r*.15,cy+r*.2); g.quadraticCurveTo(cx,cy+r*.3,cx+r*.15,cy+r*.2); g.stroke();
+  }
+}
+/* Star power-up (points) */
+class Star{
+  constructor(){
+    this.s=22; this.x=W + rand(120,W*.9); this.y=H*.84 - this.s - rand(120,220);
+    this.vx=-(speed + rand(1.2,2.0)); this.p=0;
+  }
+  get box(){ return {x:this.x-this.s/2, y:this.y-this.s/2, w:this.s, h:this.s}; }
+  update(dt){ this.p+=.08; this.x+=this.vx*dt*60; }
+  draw(){
+    const R=this.s/2, r=this.s/4; g.save(); g.translate(this.x,this.y); g.rotate(Math.sin(this.p)*.2);
+    const grad=g.createRadialGradient(0,0,2,0,0,R); grad.addColorStop(0,'#fffbe6'); grad.addColorStop(1,'#ffe08a');
+    g.fillStyle=grad; g.beginPath();
+    let rot=Math.PI/2*3, step=Math.PI/5; g.moveTo(0,-R);
+    for(let i=0;i<5;i++){ g.lineTo(Math.cos(rot)*R,Math.sin(rot)*R); rot+=step;
+                          g.lineTo(Math.cos(rot)*r,Math.sin(rot)*r); rot+=step; }
+    g.closePath(); g.fill(); g.restore();
+  }
+}
+/* Heart power-up (extra life) */
+class Heart{
+  constructor(){
+    this.s=20; this.x=W + rand(160,W*.9); this.y=H*.84 - this.s - rand(80,200);
+    this.vx=-(speed + rand(1.1,1.8)); this.t=0;
+  }
+  get box(){ return {x:this.x-this.s/2, y:this.y-this.s/2, w:this.s, h:this.s}; }
+  update(dt){ this.t+=dt; this.x+=this.vx*dt*60; }
+  draw(){
+    g.save(); g.translate(this.x,this.y);
+    g.fillStyle='#ff9db6';
+    g.beginPath();
+    g.moveTo(0,6);
+    g.bezierCurveTo(10,-6, 20,6, 0,20);
+    g.bezierCurveTo(-20,6, -10,-6, 0,6);
+    g.fill();
+    g.restore();
+  }
+}
+
+/* round rect helper */
+function roundRect(ctx,x,y,w,h,r){
+  const rr=Math.min(r,w/2,h/2);
+  ctx.moveTo(x+rr,y);
+  ctx.arcTo(x+w,y, x+w,y+h, rr);
+  ctx.arcTo(x+w,y+h, x, y+h, rr);
+  ctx.arcTo(x,y+h, x,y, rr);
+  ctx.arcTo(x,y, x+w,y, rr);
+}
+
+/* =========================================================
+   5) SPAWNING & DIFFICULTY
+========================================================= */
+const mochi=[], dumplings=[], stars=[], hearts=[];
+function spawn(t){
+  // waves every 20s
+  const nowWave = Math.min(1+Math.floor(t/20), 12);
+  if(nowWave!==wave){ wave=nowWave; blip(480,.08,.08); }
+  speed = 3.6 + wave*0.35;
+
+  // spawn pacing (seconds; time-based, not frame-based)
+  const mochiEvery = Math.max(2.2 - wave*0.08, 0.8);
+  const dumpEvery  = Math.max(2.6 - wave*0.10, 1.0);
+  const starEvery  = Math.max(2.8 - wave*0.05, 1.2);
+  const heartEvery = Math.max(7.5 - wave*0.15, 3.5);
+
+  if(nearMod(t, mochiEvery)) mochi.push(new Mochi());
+  if(nearMod(t, dumpEvery )) dumplings.push(new Dumpling());
+  if(nearMod(t, starEvery )) stars.push(new Star());
+  if(nearMod(t, heartEvery)) hearts.push(new Heart());
+}
+function nearMod(t, every){ return Math.abs((t % every) - every) < 0.02; }
+
+/* =========================================================
+   6) INPUTS
+========================================================= */
+addEventListener('keydown', e=>{
+  if(e.code==='Space'){ if(!started){ startGame(); } else if(!over){ PLAYER.jump(); } }
+});
+addEventListener('pointerdown', ()=>{ if(!started){ startGame(); } else if(!over){ PLAYER.jump(); } });
+
+/* =========================================================
+   7) GAME FLOW
+========================================================= */
+const selectEl=document.getElementById('select');
+
+function startGame(){
+  started=true; over=false; score=0; lives=3; wave=1; meters=0; t0=performance.now();
+  mochi.length=dumplings.length=stars.length=hearts.length=0;
+  PLAYER.x=W*.22; PLAYER.y=H*.84-PLAYER.h/2; PLAYER.vy=0; PLAYER.onGround=true;
+  selectEl.style.display='none';
+}
+function gameOver(){
+  over=true; started=false; blip(220,.12,.12);
+  selectEl.querySelector('h1').textContent='Game Over';
+  selectEl.querySelector('p').textContent='Click a card or press Space to run again. You can swap avatars anytime.';
+  selectEl.style.display='flex';
+}
+
+/* =========================================================
+   8) MAIN LOOP
+========================================================= */
+let last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(1/30,(now-last)/1000); last=now;
+  const t=(now-t0)/1000;
+
+  // background
+  drawSky(t);
+  layerFar.update(dt); layerFar.draw();
+  layerNear.update(dt); layerNear.draw();
+  drawGround(dt);
+  setHUD();
+
+  if(started && !over){
+    spawn(t);
+
+    PLAYER.update(dt);
+
+    // enemies
+    for(let i=mochi.length-1;i>=0;i--){
+      const m=mochi[i]; m.update(dt); m.draw();
+      if(AABB(PLAYER.box,m.box)){ mochi.splice(i,1); lives--; blip(260,.08,.1); if(lives<=0) gameOver(); }
+      else if(m.x<-80) mochi.splice(i,1);
+    }
+    for(let i=dumplings.length-1;i>=0;i--){
+      const d=dumplings[i]; d.update(dt); d.draw();
+      if(AABB(PLAYER.box,d.box)){ dumplings.splice(i,1); lives--; blip(260,.08,.1); if(lives<=0) gameOver(); }
+      else if(d.x<-80) dumplings.splice(i,1);
+    }
+
+    // powerups
+    for(let i=stars.length-1;i>=0;i--){
+      const s=stars[i]; s.update(dt); s.draw();
+      if(AABB(PLAYER.box,s.box)){ stars.splice(i,1); score+=5; blip(960,.07,.09); }
+      else if(s.x<-80) stars.splice(i,1);
+    }
+    for(let i=hearts.length-1;i>=0;i--){
+      const h=hearts[i]; h.update(dt); h.draw();
+      if(AABB(PLAYER.box,h.box)){ hearts.splice(i,1); lives=Math.min(3,lives+1); blip(720,.07,.09); }
+      else if(h.x<-80) hearts.splice(i,1);
+    }
+
+    // distance (not shown, but could be)
+    meters += speed*dt;
+
+    // draw player last
+    PLAYER.draw();
+
+  }else{
+    // idle title watermark
+    g.save(); g.globalAlpha=.15; g.font='bold 120px/1 "Courier New",monospace'; g.fillStyle='#fff'; g.textAlign='center';
+    g.fillText('Kawaii Run', W/2, H/2); g.restore();
+  }
+
+  // CRT pass
+  scanlines();
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
